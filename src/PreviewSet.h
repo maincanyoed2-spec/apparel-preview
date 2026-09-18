@@ -15,7 +15,7 @@ namespace AP {
     // Not thread-safe; callers synchronize (PreviewSession owns the lock).
     class PreviewSet {
     public:
-        enum class Change { kAdded, kRemoved, kRejected };
+        enum class Change { kAdded, kRemoved, kUnchanged, kRejected };
 
         struct Entry {
             std::uint32_t formID{ 0 };
@@ -34,6 +34,22 @@ namespace AP {
             // variant of the same base form - identical slots).
             std::erase_if(entries_, [&](const Entry& e) { return (e.slotMask & a_slotMask) != 0; });
             entries_.push_back({ a_formID, a_variantKey, a_slotMask });
+            return Change::kAdded;
+        }
+
+        // Mouseover mode intentionally shows one row at a time. Replacing the
+        // whole set in one operation avoids a clear/rebuild/add/rebuild flicker
+        // when the highlight moves from one apparel row to another.
+        Change ReplaceWith(std::uint32_t a_formID, std::uint32_t a_variantKey,
+                           std::uint32_t a_slotMask) {
+            if (a_slotMask == 0) {
+                return Change::kRejected;
+            }
+            if (entries_.size() == 1 && ContainsExact(a_formID, a_variantKey) &&
+                entries_.front().slotMask == a_slotMask) {
+                return Change::kUnchanged;
+            }
+            entries_.assign(1, Entry{ a_formID, a_variantKey, a_slotMask });
             return Change::kAdded;
         }
 

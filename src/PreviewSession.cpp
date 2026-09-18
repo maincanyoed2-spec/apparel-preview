@@ -1,7 +1,9 @@
 #include "PreviewSession.h"
 
+#include "FittingRoomSignal.h"  // publish preview state before every refresh
 #include "HoverTracker.h"
 #include "ListMarker.h"
+#include "MenuStudioApi.h"
 #include "Settings.h"
 
 namespace AP {
@@ -63,6 +65,7 @@ namespace AP {
     }
 
     void PreviewSession::Toggle(RE::TESObjectARMO* a_armor, std::uint32_t a_variantKey) {
+        automaticGeneration_.fetch_add(1, std::memory_order_relaxed);
         if (!a_armor) {
             return;
         }
@@ -74,17 +77,17 @@ namespace AP {
             // would render a broken or invisible preview. Decline LOUDLY:
             // a silent no-op reads as "the mod is broken".
             spdlog::info("preview declined: '{}' ({:08X}) has no armor addon for race "
-                         "'{}' - does not fit this body.",
+                         "'{}'. Does not fit this body.",
                          a_armor->GetName(), a_armor->GetFormID(),
                          race ? race->GetName() : "?");
             if (Settings::GetSingleton().notifyUnfitPreview) {
-                RE::DebugNotification("Cannot preview: this piece does not fit your body.",
+                RE::SendHUDMessage::ShowHUDMessage("Cannot preview: this piece does not fit your body.",
                                       "UIMenuCancel");
             }
             return;
         }
         using Slot = RE::BGSBipedObjectForm::BipedObjectSlot;
-        const auto slotMask = static_cast<std::uint32_t>(a_armor->GetSlotMask());
+        const auto slotMask = a_armor->GetSlotMask().underlying();
         if (!Settings::GetSingleton().allowShields &&
             (slotMask & static_cast<std::uint32_t>(Slot::kShield)) != 0) {
             spdlog::debug("Toggle: '{}' is a shield and shield preview is disabled.", a_armor->GetName());
@@ -96,6 +99,51 @@ namespace AP {
         const std::string name    = a_armor->GetName();
         SKSE::GetTaskInterface()->AddTask([this, formID, variant, mask, name] {
             ToggleImpl(formID, variant, mask, name);
+        });
+    }
+
+    void PreviewSession::PreviewOnly(RE::TESObjectARMO* a_armor,
+                                     std::uint32_t a_variantKey) {
+        if (!a_armor) {
+            Clear();
+            return;
+        }
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        auto* race   = player ? player->GetRace() : nullptr;
+        if (!race || !a_armor->GetArmorAddon(race)) {
+            spdlog::info("mouseover preview declined: '{}' ({:08X}) has no armor addon for "
+                         "race '{}'. Does not fit this body.",
+                         a_armor->GetName(), a_armor->GetFormID(),
+                         race ? race->GetName() : "?");
+            Clear();
+            if (Settings::GetSingleton().notifyUnfitPreview) {
+                RE::SendHUDMessage::ShowHUDMessage("Cannot preview: this piece does not fit your body.",
+                                      "UIMenuCancel");
+            }
+            return;
+        }
+        using Slot = RE::BGSBipedObjectForm::BipedObjectSlot;
+        const auto mask = a_armor->GetSlotMask().underlying();
+        if (mask == 0) {
+            spdlog::debug("mouseover preview declined: '{}' has no biped slots.",
+                          a_armor->GetName());
+            Clear();
+            return;
+        }
+        if (!Settings::GetSingleton().allowShields &&
+            (mask & static_cast<std::uint32_t>(Slot::kShield)) != 0) {
+            Clear();
+            return;
+        }
+        const auto        formID = a_armor->GetFormID();
+        const std::string name   = a_armor->GetName();
+        const auto generation =
+            automaticGeneration_.fetch_add(1, std::memory_order_relaxed) + 1;
+        SKSE::GetTaskInterface()->AddTask([this, formID, a_variantKey, mask, name, generation] {
+            if (automaticGeneration_.load(std::memory_order_relaxed) != generation) {
+                return;  // the highlight moved again before this task ran
+            }
+            PreviewOnlyImpl(formID, a_variantKey, mask, name);
         });
     }
 
@@ -171,7 +219,7 @@ namespace AP {
                     continue;
                 }
                 if (const auto* armo = entry->object->As<RE::TESObjectARMO>()) {
-                    wornHead |= static_cast<std::uint32_t>(armo->GetSlotMask()) &
+                    wornHead |= armo->GetSlotMask().underlying() &
                                 kHT2HeadSlots;
                 }
             }
@@ -206,7 +254,7 @@ namespace AP {
                 spdlog::info("preview rejected: '{}' ({:08X}, mask={:08X}) targets a head "
                              "slot hidden by Helmet Toggle (HT_HelmetState > 0).",
                              a_name, a_formID, a_mask);
-                RE::DebugNotification("Cannot preview: headwear is hidden by Helmet Toggle.",
+                RE::SendHUDMessage::ShowHUDMessage("Cannot preview: headwear is hidden by Helmet Toggle.",
                                       "UIMenuCancel");
             }
             return;
@@ -215,29 +263,86 @@ namespace AP {
                      change == PreviewSet::Change::kAdded ? "ON" : "OFF", a_name,
                      a_formID, a_variantKey, a_mask);
         const auto& cfg = Settings::GetSingleton();
-        REAug::RefreshPlayer(cfg.sceneKick);
+        PublishAndRefresh(cfg.sceneKick);
         ListMarker::Apply();
-        // Preview ON: clear the floating item-card model so it doesn't
-        // block the view of the character (the hover thunk keeps it clear
-        // while the row stays previewed). Preview OFF: reload the hovered
-        // row's model, unless the user opted out of hover models entirely.
-        if (cfg.clearModelOnPreview) {
+        // Preview ON: hide the floating item preview so it doesn't block the
+        // character (the hover thunk keeps it hidden while the row stays
+        // previewed). Preview OFF: reload the hovered row's model, unless the
+        // user opted out of floating previews entirely.
+        if (!MenuStudioApi::Available() && cfg.clearModelOnPreview) {
             if (auto* i3d = RE::Inventory3DManager::GetSingleton()) {
                 if (change == PreviewSet::Change::kAdded) {
-                    i3d->Clear3D();
+                    i3d->UnloadInventoryItem();
                 } else if (auto* entry = HoverTracker::GetHovered();
                            entry && !cfg.suppressHoverModel) {
                     auto* obj = entry->GetObject();
                     if (obj && obj->GetFormID() == a_formID &&
                         VariantKey(entry) == a_variantKey) {
-                        i3d->UpdateItem3D(entry);
+                        i3d->LoadInventoryItem(entry);
                     }
                 }
             }
         }
     }
 
+    void PreviewSession::PreviewOnlyImpl(RE::FormID a_formID,
+                                         std::uint32_t a_variantKey,
+                                         std::uint32_t a_mask,
+                                         const std::string& a_name) {
+        // The same gameplay guards as manual ToggleImpl. Automatic mode clears
+        // the previous row when the new row is not previewable; leaving the old
+        // outfit on screen after the pointer moved would be misleading.
+        const bool wornByPlayer = IsFormWornByPlayer(a_formID);
+        const bool headHidden   = HiddenHeadgearConflict(a_mask);
+
+        PreviewSet::Change change;
+        bool               clearedRejected = false;
+        {
+            std::scoped_lock l(lock_);
+            if (wornByPlayer || headHidden) {
+                clearedRejected = !set_.Empty();
+                set_.Clear();
+                change = PreviewSet::Change::kRejected;
+            } else {
+                change = set_.ReplaceWith(a_formID, a_variantKey, a_mask);
+            }
+        }
+
+        if (change == PreviewSet::Change::kRejected) {
+            if (wornByPlayer) {
+                spdlog::info("mouseover preview rejected: '{}' ({:08X}) is currently worn.",
+                             a_name, a_formID);
+            } else {
+                spdlog::info("mouseover preview rejected: '{}' ({:08X}, mask={:08X}) targets "
+                             "a head slot hidden by Helmet Toggle.",
+                             a_name, a_formID, a_mask);
+                RE::SendHUDMessage::ShowHUDMessage("Cannot preview: headwear is hidden by Helmet Toggle.",
+                                      "UIMenuCancel");
+            }
+            if (clearedRejected) {
+                PublishAndRefresh(Settings::GetSingleton().sceneKick);
+                ListMarker::Apply();
+            }
+            return;
+        }
+        if (change == PreviewSet::Change::kUnchanged) {
+            return;
+        }
+
+        spdlog::info("preview HOVER '{}' ({:08X} variant={:08X}, mask={:08X})",
+                     a_name, a_formID, a_variantKey, a_mask);
+        const auto& cfg = Settings::GetSingleton();
+        PublishAndRefresh(cfg.sceneKick);
+        ListMarker::Apply();
+        if (!MenuStudioApi::Available() && cfg.clearModelOnPreview) {
+            if (auto* i3d = RE::Inventory3DManager::GetSingleton()) {
+                i3d->UnloadInventoryItem();
+            }
+        }
+    }
+
     void PreviewSession::Clear() {
+        automaticGeneration_.fetch_add(1, std::memory_order_relaxed);
         bool wasActive;
         {
             std::scoped_lock l(lock_);
@@ -246,7 +351,7 @@ namespace AP {
         }
         if (wasActive) {
             SKSE::GetTaskInterface()->AddTask([] {
-                REAug::RefreshPlayer(Settings::GetSingleton().sceneKick);
+                PublishAndRefresh(Settings::GetSingleton().sceneKick);
                 ListMarker::Apply();  // no-op if the menu already closed (disarmed)
             });
             spdlog::info("preview CLEARED.");
@@ -265,18 +370,54 @@ namespace AP {
     }
 
     void PreviewSession::RemoveFormAndRefresh(RE::FormID a_formID, const char* a_reason) {
+        automaticGeneration_.fetch_add(1, std::memory_order_relaxed);
         bool removed;
         {
             std::scoped_lock l(lock_);
             removed = set_.Remove(a_formID);
         }
         if (removed) {
-            spdlog::info("previewed item {:08X} {} - dropped from preview.", a_formID, a_reason);
+            spdlog::info("previewed item {:08X} {}. Dropped from preview.", a_formID, a_reason);
             SKSE::GetTaskInterface()->AddTask([] {
-                REAug::RefreshPlayer(Settings::GetSingleton().sceneKick);
+                PublishAndRefresh(Settings::GetSingleton().sceneKick);
                 ListMarker::Apply();
             });
         }
+    }
+
+    void PreviewSession::PublishAndRefresh(bool a_sceneKick) {
+        // ⚠ BEFORE the refresh. RefreshPlayer is what drives the engine's
+        // GetWornMask call, and Fitting Room decides whether to shim that call
+        // from the flag this message sets. Publishing afterwards would answer
+        // for the state we just left, which is the headless case in reverse.
+        //
+        // Read outside any lock we hold: every caller has already released it,
+        // and StateToPublish takes lock_ itself.
+        if (auto* const messaging = SKSE::GetMessagingInterface()) {
+            const auto state = GetSingleton().StateToPublish();
+            // ⚠ SLOTS FIRST, FLAG SECOND, AND THE ORDER IS THE CONTRACT
+            // (OS-145). Fitting Room packs the two into one word and the flag
+            // is what arms its dye skip, so the mask has to be in place before
+            // the flag says a preview is live. Reversed, FR would arm the skip
+            // against the PREVIOUS hover's slots for one message, and exempt a
+            // garment nobody is previewing.
+            const auto slots = EncodePreviewSlots(state.slotMask);
+            messaging->Dispatch(kPreviewSlotsMsg, const_cast<std::uint8_t*>(slots.data()),
+                                static_cast<std::uint32_t>(slots.size()), "FittingRoom");
+            // Unchanged shape, deliberately: an older Fitting Room reads only
+            // this one and must go on reading it correctly. See
+            // FittingRoomSignal.h.
+            const std::uint8_t active = EncodePreviewState(state.active);
+            messaging->Dispatch(kPreviewStateMsg, const_cast<std::uint8_t*>(&active),
+                                sizeof(active), "FittingRoom");
+        }
+        REAug::RefreshPlayer(a_sceneKick);
+        HoverTracker::SyncItemPreviewSuppression();
+    }
+
+    PreviewSession::PublishState PreviewSession::StateToPublish() const {
+        std::scoped_lock l(lock_);
+        return PublishState{ !set_.Empty(), set_.UnionMask() };
     }
 
     bool PreviewSession::IsActive() const {

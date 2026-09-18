@@ -4,7 +4,7 @@
 # SKSE/Plugins/ApparelPreview.dll + the optional Dynamic Inventory Icon Injector
 # integration (SKSE/Plugins/DIII/zzz_ApparelPreview.json + the icon at
 # Interface/ApparelPreview/previewicon.swf). No INI (settings live in FLICK /
-# code defaults). No PDB. One build covers SE 1.5.97 and AE 1.6.1130+.
+# code defaults). No PDB. One build covers SE 1.5.97 and AE 1.6.317+.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

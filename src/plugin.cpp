@@ -2,6 +2,7 @@
 
 #include "BipedHooks.h"
 #include "DIIIIntegration.h"
+#include "FittingRoomSignal.h"
 #include "HoverTracker.h"
 #include "InputListener.h"
 #include "MenuWatcher.h"
@@ -10,16 +11,44 @@
 #include "VersionCheck.h"
 #include "SettingsUI.h"
 
+#include <ctime>         // LocalNow
+#include <filesystem>    // log rotation
+#include <string>
+#include <system_error>  // non-throwing rename/remove
+
 namespace {
-    constexpr auto kLogName = "ApparelPreview.log";
-    constexpr auto kVersion = "0.4.3";
+    constexpr auto kLogName     = "ApparelPreview.log";
+    constexpr auto kPrevLogName = "ApparelPreview.prev.log";
+    constexpr auto kVersion     = "1.2.0";
+
+    // Local wall-clock time for the first line of the log. The line pattern
+    // carries the time of day only, so without this a log cannot say which
+    // day it is from, and a session that runs past midnight reads as one
+    // day. std::time and localtime_s: nothing here can throw.
+    std::string LocalNow() {
+        const auto now = std::time(nullptr);
+        std::tm    tm{};
+        localtime_s(&tm, &now);
+        char buf[32]{};
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+        return buf;
+    }
 
     void SetupLog() {
         auto path = SKSE::log::log_directory();
         if (!path) {
             return;
         }
+        auto prev = *path / kPrevLogName;
         *path /= kLogName;
+
+        // Rotate, do not just truncate: a report's evidence lives only in
+        // this file, and a reporter's next launch wipes it before anyone
+        // collected it. One kept generation makes that recoverable. Best
+        // effort: a failed rename never stops the plugin loading.
+        std::error_code ec;
+        std::filesystem::remove(prev, ec);
+        std::filesystem::rename(*path, prev, ec);
 
         auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
         auto logger = std::make_shared<spdlog::logger>("global", std::move(sink));
@@ -40,9 +69,9 @@ namespace {
             AP::DIIIIntegration::Register();
 
             // Fitting Room (same studio) dispatches 'CLRP' when its transmog
-            // editor opens: clear any hover preview so the editor starts from
-            // the true look - the inventory is hidden under its modal editor,
-            // so no un-hover event would ever fire.
+            // editor changes state. Legacy builds send no payload ("clear
+            // once"); current builds send one byte (1=open, 0=closed) so we
+            // can remain suspended while its overlay owns InventoryMenu.
             //
             // ⚠ REGISTERED UNDER BOTH NAMES, AND THE OLD ONE ALONE WAS A BUG.
             // The mod was renamed Outfit Slots -> Fitting Room and its SKSE
@@ -55,13 +84,30 @@ namespace {
             auto* const messaging = SKSE::GetMessagingInterface();
             const auto  onClear   = [](SKSE::MessagingInterface::Message* a_m) {
                 if (a_m && a_m->type == 'CLRP') {
-                    spdlog::info("Fitting Room editor opened - clearing preview.");
-                    AP::PreviewSession::GetSingleton().Clear();
+                    switch (AP::DecodeFittingRoomSignal(a_m->data, a_m->dataLen)) {
+                        case AP::FittingRoomSignal::kOpened:
+                            AP::MenuWatcher::SetFittingRoomOpen(true);
+                            AP::HoverTracker::ClearHovered();
+                            AP::PreviewSession::GetSingleton().Clear();
+                            spdlog::info(
+                                "Fitting Room editor opened. Preview cleared + suspended.");
+                            break;
+                        case AP::FittingRoomSignal::kClosed:
+                            AP::MenuWatcher::SetFittingRoomOpen(false);
+                            AP::HoverTracker::ClearHovered();
+                            spdlog::info("Fitting Room editor closed. Preview resumed.");
+                            break;
+                        case AP::FittingRoomSignal::kClearOnly:
+                            spdlog::info(
+                                "Fitting Room editor opened. Clearing preview (legacy signal).");
+                            AP::PreviewSession::GetSingleton().Clear();
+                            break;
+                    }
                 }
             };
             if (!messaging->RegisterListener("FittingRoom", onClear)) {
-                spdlog::info("Fitting Room not present - no editor-open preview clear. Normal "
-                             "unless you run both mods.");
+                spdlog::info("Fitting Room not present, so no preview clear when its editor "
+                             "opens. Normal unless you run both mods.");
             }
             messaging->RegisterListener("OutfitSlots", onClear);  // pre-rename builds
 
@@ -72,8 +118,8 @@ namespace {
                 std::filesystem::exists("Data/SKSE/Plugins/SkyrimOutfitSystemSE.dll") ||
                 std::filesystem::exists("Data/SKSE/Plugins/SkyrimOutfitEquipmentSystemNG.dll");
             if (conflict) {
-                spdlog::error("Skyrim Outfit System detected - Apparel Preview shares its biped "
-                              "pipeline and stays DISABLED this session.");
+                spdlog::error("Skyrim Outfit System detected. Apparel Preview shares its biped "
+                              "pipeline, so it stays DISABLED this session.");
             } else {
                 AP::BipedHooks::Install();
             }
@@ -99,7 +145,10 @@ namespace {
 
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     SetupLog();
-    spdlog::info("ApparelPreview v{} loading...", kVersion);
+    // Version, build stamp and session date on one line: a reporter's log
+    // then says which DLL and which day without a conversation.
+    spdlog::info("ApparelPreview v{} loading... (build {} {}, session {})", kVersion,
+                 __DATE__, __TIME__, LocalNow());
 
     // Universal SE + AE build: SE 1.5.97 and every AE from 1.6.317 up.
     //
@@ -119,21 +168,24 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     // than on a version number.
     const auto ver = a_skse->RuntimeVersion();
     if (ver != SKSE::RUNTIME_SSE_1_5_97 && ver < REL::Version(1, 6, 317, 0)) {
-        spdlog::error("Unsupported Skyrim runtime {} - Apparel Preview supports SE 1.5.97 "
-                      "and AE 1.6.317+; not loading.", ver.string());
+        spdlog::error("Unsupported Skyrim runtime {}. Apparel Preview supports SE 1.5.97 "
+                      "and AE 1.6.317+. Not loading.", ver.string());
         return false;
     }
 
     AP::VersionCheck::Run();
     if (!AP::VersionCheck::CriticalOk()) {
-        spdlog::error("Address self-check FAILED on runtime {} - the biped hooks have nowhere "
+        spdlog::error("Address self-check FAILED on runtime {}. The biped hooks have nowhere "
                       "to install, so Apparel Preview would load and preview nothing. Not "
                       "loading. Please send ApparelPreview.log to the author.", ver.string());
         return false;
     }
 
-    SKSE::Init(a_skse);
-    SKSE::AllocTrampoline(256);
+    // log = false, because the library would otherwise replace the logger
+    // SetupLog built with its own file name, pattern and level. The
+    // trampoline request is the old AllocTrampoline(256): SKSE's branch
+    // pool first, pages of our own second.
+    SKSE::Init(a_skse, { .log = false, .trampoline = true, .trampolineSize = 256 });
 
     AP::HoverTracker::Install();
     AP::InputListener::InstallPOVGate();

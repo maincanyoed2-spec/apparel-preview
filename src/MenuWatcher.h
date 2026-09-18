@@ -19,6 +19,12 @@ namespace AP {
         // silently break POV switching / deref a freed hover entry.
         [[nodiscard]] static bool IsArmedAndMenuOpen();
 
+        // Fitting Room is an ImGui/FUCK overlay over a still-open
+        // InventoryMenu. Suspend all selection/input paths while it owns that
+        // menu; otherwise the invisible inventory list keeps driving previews.
+        static void SetFittingRoomOpen(bool a_open);
+        [[nodiscard]] static bool IsFittingRoomOpen();
+
         // kPreLoadGame / kNewGame backstop: drop all menu-scoped state.
         static void ForceReset(const char* a_reason);
 
@@ -27,6 +33,7 @@ namespace AP {
 
     private:
         std::atomic<bool> armed_{ false };
+        std::atomic<bool> fittingRoomOpen_{ false };
     };
 
 }  // namespace AP

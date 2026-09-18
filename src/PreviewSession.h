@@ -15,6 +15,10 @@ namespace AP {
         static PreviewSession& GetSingleton();
 
         void Toggle(RE::TESObjectARMO* a_armor, std::uint32_t a_variantKey);  // add/remove/swap + refresh
+        // Mouseover mode: show exactly this row, replacing the previous
+        // automatic preview in one rebuild. Passing a rejected candidate
+        // (unfitted, worn, hidden headgear, disabled shield) restores reality.
+        void PreviewOnly(RE::TESObjectARMO* a_armor, std::uint32_t a_variantKey);
         void Clear();                                // revert to real worn look + refresh
         void OnPlayerAcquired(RE::FormID a_formID);  // container-changed path
         void OnPlayerEquipped(RE::FormID a_formID);  // equip-event path (inventory menu)
@@ -34,13 +38,41 @@ namespace AP {
         [[nodiscard]] std::uint32_t PreviewMask() const;
         void VisitPreviewArmors(const std::function<void(RE::TESObjectARMO*)>& a_fn) const;
 
+        // What PublishAndRefresh tells Fitting Room, read under ONE lock.
+        // ⚠ NOT IsActive() FOLLOWED BY PreviewMask(). Those take the lock
+        // twice, so a set that changed in between would be published as a live
+        // preview carrying the previous hover's slots - and FR skips its dye on
+        // exactly the bits this names, so the mismatch would exempt the wrong
+        // garment. The pair is only useful if it is a pair.
+        struct PublishState {
+            bool          active{ false };
+            std::uint32_t slotMask{ 0 };
+        };
+        [[nodiscard]] PublishState StateToPublish() const;
+
     private:
         void ToggleImpl(RE::FormID a_formID, std::uint32_t a_variantKey, std::uint32_t a_mask,
                         const std::string& a_name);
+        void PreviewOnlyImpl(RE::FormID a_formID, std::uint32_t a_variantKey,
+                             std::uint32_t a_mask, const std::string& a_name);
         void RemoveFormAndRefresh(RE::FormID a_formID, const char* a_reason);
+
+        // Tell Fitting Room whether a preview is live, then refresh.
+        // ⚠ EVERY refresh that can change what sits on the biped goes through
+        // here, and the order inside is load-bearing - the refresh is what
+        // makes the engine ask for the worn mask, and FR answers it from this
+        // flag. Routing all of them through one function is the point: a new
+        // refresh site that called REAug::RefreshPlayer directly would leave
+        // FR answering for the previous state. See FittingRoomSignal.h.
+        // Static so the task-interface lambdas can reach it without capturing.
+        static void PublishAndRefresh(bool a_sceneKick);
 
         mutable std::mutex lock_;
         PreviewSet         set_;
+        // Coalesces rapid mouseover changes. Every new automatic request gets
+        // a generation; manual toggles, clears and menu closes invalidate any
+        // queued request that has not reached the game thread yet.
+        std::atomic<std::uint64_t> automaticGeneration_{ 0 };
     };
 
 }  // namespace AP

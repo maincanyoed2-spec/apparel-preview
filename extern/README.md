@@ -1,4 +1,11 @@
-Vendored third-party headers. Full attribution and licenses: ../THIRD-PARTY-NOTICES.md.
+Vendored third-party headers and the engine library. Full attribution and licenses:
+../THIRD-PARTY-NOTICES.md.
+
+CommonLibSSE-NG/ - alandtse's CommonLibSSE-NG (GPL-3.0-or-later), branch ng, as a git
+submodule pinned to a release tag; `git -C extern/CommonLibSSE-NG describe --tags` names
+the one in use. Clone with --recurse-submodules, or run `git submodule update --init
+--recursive` afterwards. A bump is its own commit: check out the new tag inside the
+submodule, build, run the tests, then commit the pointer.
 
 DIII_API.h - vendored verbatim from JerryYOJ/Dynamic-Inventory-Icon-Injector-SKSE
 (GPL-3.0), api/DIII_API.h. This header is why the repository is licensed GPL-3.0.

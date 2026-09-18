@@ -47,7 +47,7 @@ namespace AP::REAug {
         const auto c1 = BipedHooks::PlayerWornPassCount();
         spdlog::debug("refresh (SetEquipFlag+UpdateEquipment): wornpass ran {}x", c1 - c0);
         if (c1 == c0) {
-            spdlog::warn("refresh: skinning pass did NOT run - preview will not update visually.");
+            spdlog::warn("refresh: skinning pass did NOT run. Preview will not update visually.");
         }
 
         if (a_sceneKick) {

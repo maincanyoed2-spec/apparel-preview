@@ -96,13 +96,15 @@ namespace {
     std::ptrdiff_t HoverHint() { return REL::Relocate(std::ptrdiff_t{ 0x114 }, std::ptrdiff_t{ 0x22C }); }
 
     // ---- database ----------------------------------------------------------
-    // Built from IDDatabase::Offset2ID because that is the only PUBLIC route to
-    // the id table. It copies and sorts the whole database (~380k entries) and
+    // Built from REL::Offset2ID because that is the only PUBLIC route to the
+    // id table. It copies and sorts the whole database (~380k entries) and
     // we throw the sort away, which is wasteful but happens once at startup.
+    // It reads whichever file format the library loaded, so on 1.7.99 and
+    // later it walks the format-5 table the same way.
     const std::unordered_set<std::uint64_t>& IdSet() {
         static const std::unordered_set<std::uint64_t> set = [] {
             std::unordered_set<std::uint64_t> out;
-            const REL::IDDatabase::Offset2ID  db{};
+            const REL::Offset2ID db{};
             out.reserve(db.size());
             for (const auto& entry : db) {
                 out.insert(entry.id);
@@ -149,12 +151,22 @@ namespace {
         const char*    how{ "absent" };
     };
 
-    // TRUE on the two runtimes whose call-site offsets were measured by hand
-    // against the real binary. On those the hint is KNOWN correct, which is
+    // TRUE on the runtimes whose call-site offsets were measured by hand
+    // against the real binary: 1.5.97, and the 1.6.1130 to 1.6.1179 line
+    // (measured on 1.6.1170). On those the hint is KNOWN correct, which is
     // what lets LocateCall fall back to it - see the chaining case there.
+    //
+    // ⚠ 1.7.99 AND LATER ARE NOT ON THE LIST. Those builds shifted function
+    // bodies (the CommonLibSSE-NG changelog: "model AE 1.7.99 layout
+    // changes"), so a hint measured on 1.6.1170 is a guess there, and a
+    // guess that lands on an E8 by luck is a five-byte write into the
+    // middle of an unrelated instruction. On 1.7 the call's target must
+    // match or the site is refused, and the first clean 1.7 log is what
+    // turns the located offsets into measured hints of their own.
     bool HintIsHandMeasured() {
         const auto v = REL::Module::get().version();
-        return v == REL::Version(1, 5, 97, 0) || v >= REL::Version(1, 6, 1130, 0);
+        return v == REL::Version(1, 5, 97, 0) ||
+               (v >= REL::Version(1, 6, 1130, 0) && v < REL::Version(1, 7, 0, 0));
     }
 
     // Find the call to a_callee inside the function at a_start.
@@ -233,7 +245,7 @@ namespace {
             if (hits > a_ordinal) {
                 return { nth, "located by scan (ordinal)" };
             }
-            spdlog::error("  only {} matching call(s), needed at least {} - the function's "
+            spdlog::error("  only {} matching call(s), needed at least {}. The function's "
                           "shape changed; not guessing.", hits, a_ordinal + 1);
             return {};
         }
@@ -241,7 +253,7 @@ namespace {
             return { found, "located by scan" };
         }
         if (hits > 1) {
-            spdlog::error("  {} calls match inside the function - ambiguous, refusing to guess.",
+            spdlog::error("  {} calls match inside the function: ambiguous, refusing to guess.",
                           hits);
             return {};
         }
@@ -271,7 +283,7 @@ namespace {
         if (a_hint != 0 && HintIsHandMeasured() &&
             a_start + static_cast<std::uintptr_t>(a_hint) + 5 < textHi &&
             *reinterpret_cast<const std::uint8_t*>(a_start + a_hint) == 0xE8) {
-            return { a_hint, "hand-measured offset, ALREADY HOOKED by another mod - chaining" };
+            return { a_hint, "hand-measured offset, ALREADY HOOKED by another mod; chaining" };
         }
         return {};
     }
@@ -370,9 +382,21 @@ namespace AP::VersionCheck {
         }
         g_ran = true;
 
-        spdlog::info("--- address self-check, runtime {} ---", REL::Module::get().version().string());
-        spdlog::info("  reading Address Library...");
+        // The first three lines are what a tester's log from a runtime we do
+        // not have is read against: which library, which game, which Address
+        // Library file format (1 = SE, 2 = AE up to 1.6.1179, 5 = 1.7.99 and
+        // later), and whether the hand-measured hints were trusted at all.
+        const auto  version = REL::Module::get().version();
+        const char* family  = REL::Module::IsAE() ? "AE" : REL::Module::IsSE() ? "SE" : "VR";
+        const int   format  = version >= REL::Version(1, 7, 99, 0) ? 5 : REL::Module::IsAE() ? 2 : 1;
+        spdlog::info("--- address self-check, runtime {} ({}) ---", version.string(), family);
+        spdlog::info("  CommonLibSSE-NG {} (alandtse, branch ng); Address Library v5 flag set.",
+                     AP_COMMONLIB_VERSION);
+        spdlog::info("  reading Address Library (format {})...", format);
         spdlog::info("  Address Library: {} ids.", IdSet().size());
+        spdlog::info("  hand-measured hints: {}.",
+                     HintIsHandMeasured() ? "trusted on this runtime"
+                                          : "NOT trusted on this runtime, every site must name its callee");
 
         for (const auto& entry : kTable) {
             ReportEntry(entry);

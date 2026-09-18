@@ -148,13 +148,13 @@ namespace AP {
         // one handed the worn-visitor vtable. See VersionCheck.cpp.
         const auto callOffset = VersionCheck::WornPassCallOffset();
         if (callOffset == 0) {
-            spdlog::error("BipedHooks: no worn-pass call site on this runtime - injection NOT "
+            spdlog::error("BipedHooks: no worn-pass call site on this runtime. Injection NOT "
                           "installed.");
             return;
         }
         const REL::Relocation<std::uintptr_t> site{ REL::RelocationID(24231, 24725), callOffset };
         if (*reinterpret_cast<std::uint8_t*>(site.address()) != 0xE8) {
-            spdlog::error("BipedHooks: expected E8 at the worn-pass site (SE 24231+0x81 / AE 24725+0x1EF), found {:02X} - injection NOT installed.",
+            spdlog::error("BipedHooks: expected E8 at the worn-pass site (SE 24231+0x81 / AE 24725+0x1EF), found {:02X}. Injection NOT installed.",
                           *reinterpret_cast<std::uint8_t*>(site.address()));
             return;
         }
@@ -186,7 +186,7 @@ namespace AP {
             // anyway, and injection takes its ActorWeightModel from the
             // worn-pass capture instead - so preview is unaffected. Warn, not
             // error: this is expected on some load orders, not a failure.
-            spdlog::warn("BipedHooks: 24232+0x302 is {:02X}, not E8 - another plugin patched this "
+            spdlog::warn("BipedHooks: 24232+0x302 is {:02X}, not E8. Another plugin patched this "
                          "call; AWM capture skipped (diagnostic only, preview unaffected).",
                          *reinterpret_cast<std::uint8_t*>(site.address()));
             return;
@@ -203,13 +203,13 @@ namespace AP {
         // call-sequence alignment against the AE binary).
         const auto callOffset = VersionCheck::WornMaskCallOffset();
         if (callOffset == 0) {
-            spdlog::error("BipedHooks: no worn-mask call site on this runtime - mask shim NOT "
+            spdlog::error("BipedHooks: no worn-mask call site on this runtime. Mask shim NOT "
                           "installed.");
             return;
         }
         const REL::Relocation<std::uintptr_t> site{ REL::RelocationID(24220, 24724), callOffset };
         if (*reinterpret_cast<std::uint8_t*>(site.address()) != 0xE8) {
-            spdlog::error("BipedHooks: expected E8 at 24220 (SE +0x7C / AE +0x80), found {:02X} - mask shim NOT installed.",
+            spdlog::error("BipedHooks: expected E8 at 24220 (SE +0x7C / AE +0x80), found {:02X}. Mask shim NOT installed.",
                           *reinterpret_cast<std::uint8_t*>(site.address()));
             return;
         }

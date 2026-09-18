@@ -26,6 +26,7 @@ namespace AP {
         enableContainer     = ini.GetBoolValue("General", "bEnableContainerMenu", enableContainer);
         enableBarter        = ini.GetBoolValue("General", "bEnableBarterMenu", enableBarter);
         enableInventory     = ini.GetBoolValue("General", "bEnableInventoryMenu", enableInventory);
+        previewOnHover      = ini.GetBoolValue("General", "bPreviewOnHover", previewOnHover);
         suppressHoverModel  = ini.GetBoolValue("General", "bSuppressApparelHoverModel", suppressHoverModel);
         clearModelOnPreview = ini.GetBoolValue("General", "bClearItemModelOnPreview", clearModelOnPreview);
         blockApparelInspect = ini.GetBoolValue("General", "bBlockApparelInspect", blockApparelInspect);
@@ -53,21 +54,30 @@ namespace AP {
         ini.SetBoolValue("General", "bEnableContainerMenu", enableContainer);
         ini.SetBoolValue("General", "bEnableBarterMenu", enableBarter);
         ini.SetBoolValue("General", "bEnableInventoryMenu", enableInventory);
-        ini.SetBoolValue("General", "bSuppressApparelHoverModel", suppressHoverModel);
-        ini.SetBoolValue("General", "bClearItemModelOnPreview", clearModelOnPreview);
+        ini.SetBoolValue("General", "bPreviewOnHover", previewOnHover,
+                         "; automatically preview the highlighted apparel row, with no key\n"
+                         "; press. One automatic preview at a time");
+        ini.SetBoolValue("General", "bSuppressApparelHoverModel", suppressHoverModel,
+                         "; hide Skyrim's floating item preview for every apparel row");
+        ini.SetBoolValue("General", "bClearItemModelOnPreview", clearModelOnPreview,
+                         "; hide Skyrim's floating item preview while Apparel Preview's own\n"
+                         "; worn preview is showing. Off by default. Turn it on only if the\n"
+                         "; floating preview sits over your character");
         ini.SetBoolValue("General", "bBlockApparelInspect", blockApparelInspect);
         ini.SetBoolValue("General", "bBlockPOVSwitch", blockPOVWhileArmed,
-                         "; block camera POV switching while the container/barter menu is open\n"
-                         "; (only relevant with unpaused-menu mods like Skyrim Souls RE)");
+                         "; block camera POV switching while a container, barter or inventory\n"
+                         "; menu is open (only matters with unpaused-menu mods like Skyrim\n"
+                         "; Souls RE)");
         ini.SetBoolValue("General", "bNotifyUnfitPreview", notifyUnfitPreview,
-                         "; show a notification when a piece cannot fit your body\n"
-                         "; (no armature for your race, e.g. unpatched gear on a UBE body);\n"
-                         "; the preview is declined either way");
+                         "; show a notification when a piece has no armour for your race or\n"
+                         "; body, for example unpatched gear on a UBE body. The preview is\n"
+                         "; declined either way");
         ini.SetBoolValue("General", "bShowPreviewButton", showPreviewButton,
-                         "; add a native 'Preview' prompt to SkyUI's item-card button bar\n"
-                         "; for hovered previewable apparel (the preview key does it; needs SkyUI)");
+                         "; add a 'Preview' prompt to SkyUI's item-card button bar on apparel\n"
+                         "; rows you can preview. It is a prompt only: the preview key still\n"
+                         "; does the work. Needs SkyUI");
         ini.SetValue("General", "sPreviewButtonText", previewButtonText.c_str(),
-                     "; label shown on that prompt");
+                     "; text shown on the Preview prompt above");
         ini.SetBoolValue("Advanced", "bSceneKick", sceneKick);
         ini.SetBoolValue("Advanced", "bAllowShields", allowShields);
         ini.SetLongValue("Input", "iPreviewKeyDIK", static_cast<long>(previewKeyDIK),

@@ -1,6 +1,7 @@
 #include "MenuWatcher.h"
 
 #include "BipedHooks.h"
+#include "FittingRoomSignal.h"
 #include "HoverTracker.h"
 #include "PreviewSession.h"
 #include "Settings.h"
@@ -24,21 +25,32 @@ namespace AP {
     bool MenuWatcher::IsArmed() { return GetSingleton().armed_.load(); }
 
     bool MenuWatcher::IsArmedAndMenuOpen() {
-        if (!GetSingleton().armed_.load()) {
-            return false;
-        }
+        auto& self = GetSingleton();
         auto* ui = RE::UI::GetSingleton();
-        return ui && (ui->IsMenuOpen(RE::ContainerMenu::MENU_NAME) ||
-                      ui->IsMenuOpen(RE::BarterMenu::MENU_NAME) ||
-                      ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME));
+        const bool supportedMenuOpen =
+            ui && (ui->IsMenuOpen(RE::ContainerMenu::MENU_NAME) ||
+                   ui->IsMenuOpen(RE::BarterMenu::MENU_NAME) ||
+                   ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME));
+        return PreviewActivityAllowed(self.armed_.load(), supportedMenuOpen,
+                                      self.fittingRoomOpen_.load());
+    }
+
+    void MenuWatcher::SetFittingRoomOpen(bool a_open) {
+        GetSingleton().fittingRoomOpen_.store(a_open);
+    }
+
+    bool MenuWatcher::IsFittingRoomOpen() {
+        return GetSingleton().fittingRoomOpen_.load();
     }
 
     void MenuWatcher::ForceReset(const char* a_reason) {
-        const bool wasArmed = GetSingleton().armed_.exchange(false);
+        auto&      self     = GetSingleton();
+        const bool wasArmed = self.armed_.exchange(false);
+        self.fittingRoomOpen_.store(false);
         HoverTracker::ClearHovered();
         PreviewSession::GetSingleton().Clear();
         if (wasArmed) {
-            spdlog::warn("MenuWatcher: force reset while armed ({}) - a menu close was missed.",
+            spdlog::warn("MenuWatcher: force reset while armed ({}). A menu close was missed.",
                          a_reason);
         }
     }
@@ -67,6 +79,7 @@ namespace AP {
             spdlog::debug("MenuWatcher: {} opened -> armed", a_event->menuName.c_str());
         } else {
             armed_ = false;
+            fittingRoomOpen_ = false;
             HoverTracker::ClearHovered();
             PreviewSession::GetSingleton().Clear();  // master revert on EVERY close path
             spdlog::debug("MenuWatcher: {} closed -> cleared + disarmed", a_event->menuName.c_str());

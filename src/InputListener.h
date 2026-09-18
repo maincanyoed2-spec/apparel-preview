@@ -12,7 +12,13 @@ namespace AP {
     public:
         static InputListener& GetSingleton();
         static void           Register();         // kDataLoaded
-        static void           ResolveBindings();  // kDataLoaded, after Settings::Load
+        // kDataLoaded, after Settings::Load - and AGAIN whenever the settings
+        // panel changes the preview key. ⚠ THAT SECOND CALLER IS NOT OPTIONAL:
+        // kDataLoaded fires once per PROCESS, so without it a rebind did
+        // nothing until Skyrim was restarted, which is exactly how it was
+        // reported (field 2026-08-16, "the hotkey binding is not working").
+        // Main thread only: it reads ControlMap and UserEvents.
+        static void           ResolveBindings();
         static void           InstallPOVGate();   // load-time, with the other vfunc gates
 
         // The resolved gamepad preview button as the Scaleform key code Flash

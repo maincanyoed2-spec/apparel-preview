@@ -3,30 +3,101 @@
 	<moduleName>Apparel Preview</moduleName>
 	<moduleImage path="Images\apparelpreview.png"/>
 
-	<!-- One DLL loads on both SE 1.5.97 and AE 1.6.1130+, and there are no
-	     options; everything installs together. Game files ONLY here: the docs
-	     (LICENSE/README/CHANGELOG/KNOWN-ISSUES/THIRD-PARTY-NOTICES) ship at the
-	     archive root, NOT installed to Data - flat docs at the Data root collide
-	     across mods and show as overwrite conflicts in MO2. -->
+	<!-- One DLL loads on both SE 1.5.97 and AE 1.6.317+, so there is no SE/AE
+	     file choice.
+
+	     The one question below is STARTING SETTINGS and nothing else: both
+	     answers install exactly the same files and differ only in which
+	     ApparelPreview.ini is written. Every key it sets stays changeable in
+	     game from the FLICK panel or the INI, and the plugin fills in anything
+	     the template does not carry on first run. An install choice must not
+	     gate a runtime setting, or the installer quietly owns something the
+	     panel appears to own.
+
+	     Game files ONLY in requiredInstallFiles: the docs ship at the archive
+	     root and are NOT installed to Data, because flat docs at the Data root
+	     collide across mods and show as overwrite conflicts in MO2. -->
 	<requiredInstallFiles>
 		<folder source="core\SKSE" destination="SKSE" priority="0"/>
 		<folder source="core\Interface" destination="Interface" priority="0"/>
 	</requiredInstallFiles>
 
 	<installSteps order="Explicit">
-		<installStep name="Apparel Preview">
+		<installStep name="How do you want to preview?">
 			<optionalFileGroups order="Explicit">
-				<group name="Thanks for installing" type="SelectAny">
+				<group name="Previewing (just settings, change it any time)" type="SelectExactlyOne">
 					<plugins order="Explicit">
-						<plugin name="Enjoy, and please endorse if you like the mod">
-							<description>Apparel Preview lets you see armor, clothing and jewelry on your character before you equip it, straight from the menu. In a container, barter or inventory menu, hover an item and press the preview key (C on keyboard, R3 on controller), or use the Preview button on the item card, and the piece appears on you without equipping it. Nothing you are wearing changes, and nothing is written to your save.
+						<plugin name="When I press the key">
+							<description>Hover an item and press the preview key, C on keyboard or R3 on controller, or use the Preview button on the item card. The piece appears on your character without equipping it.
+
+Pressing it on several pieces stacks them, so you can put a whole outfit together and look at it before you commit to any of it.
+
+This is the original behaviour and the one to pick if you are not sure.</description>
+							<image path="Images\apparelpreview.png"/>
+							<files>
+								<folder source="settings\on-key" destination="SKSE\Plugins" priority="1"/>
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Automatically, as I hover">
+							<description>Moving to an apparel row previews that piece on your character straight away, with no key press.
+
+One piece at a time, so this trades the outfit stacking above for not having to press anything.
+
+You can change this later in the FLICK panel or with bPreviewOnHover in ApparelPreview.ini.</description>
+							<image path="Images\apparelpreview.png"/>
+							<files>
+								<folder source="settings\on-hover" destination="SKSE\Plugins" priority="1"/>
+							</files>
+							<typeDescriptor>
+								<type name="Optional"/>
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+			</optionalFileGroups>
+		</installStep>
+
+		<installStep name="Before you play">
+			<optionalFileGroups order="Explicit">
+				<group name="Worth knowing" type="SelectAny">
+					<plugins order="Explicit">
+						<plugin name="What this mod does">
+							<description>Apparel Preview lets you see armour, clothing and jewellery on your character before you equip it, straight from the menu. In a container, barter or inventory menu, hover an item and the piece appears on you without equipping it. Nothing you are wearing changes, and nothing is written to your save.
 
 That is all there is to it.
 
-Source, docs and issue tracker: https://github.com/maartenharms/apparel-preview
+Source, docs and issue tracker: https://github.com/maartenharms/apparel-preview</description>
+							<image path="Images\apparelpreview.png"/>
+							<files/>
+							<typeDescriptor>
+								<type name="Optional"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="An interface mod I recommend">
+							<description>The worn preview appears on your character, on the right of the screen. So do the vanilla item card and Skyrim's own floating preview, so the thing you are trying to look at can end up behind them.
+
+A Vel'dun-style interface layout moves both well clear of them. Not required, not a dependency.
+
+If you use Menu Studio, its panel can hide the floating preview instead.</description>
+							<image path="Images\apparelpreview.png"/>
+							<files/>
+							<typeDescriptor>
+								<type name="Optional"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Goes well with">
+							<description>Menu Studio pauses the world when you open a menu and stages your character, which is what makes a preview worth looking at.
+
+Fitting Room keeps outfits as saved looks and dyes them. It and Apparel Preview know about each other: a piece you are only previewing does not take Fitting Room's dye, and previewing headgear no longer makes your head vanish when a style sits on your head slot.
+
+Both are optional and Apparel Preview works on its own.
 
 Thanks for installing, and if you enjoy it, a kind endorsement is always appreciated.</description>
 							<image path="Images\apparelpreview.png"/>
+							<files/>
 							<typeDescriptor>
 								<type name="Optional"/>
 							</typeDescriptor>

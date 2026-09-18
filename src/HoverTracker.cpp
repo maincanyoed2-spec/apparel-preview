@@ -1,7 +1,9 @@
 #include "HoverTracker.h"
 
 #include "InputListener.h"
+#include "ItemPreviewSuppression.h"
 #include "MenuWatcher.h"
+#include "MenuStudioApi.h"
 #include "NavButton.h"
 #include "PreviewSession.h"
 #include "Settings.h"
@@ -26,30 +28,37 @@ namespace AP {
         // stream is byte-identical to SE 51019 (SE +0x114 / AE +0x22C) (verified vs the AE binary).
         const auto callOffset = VersionCheck::HoverTrackerCallOffset();
         if (callOffset == 0) {
-            spdlog::error("HoverTracker: no hover call site on this runtime - hook NOT "
-                          "installed; hovering will not start a preview.");
-            return;
+            spdlog::warn("HoverTracker: item-card call was not locatable; using the live "
+                         "menu-selection fallback.");
+        } else {
+            const REL::Relocation<std::uintptr_t> site{
+                REL::RelocationID(51019, 51897), callOffset
+            };
+            if (*reinterpret_cast<std::uint8_t*>(site.address()) != 0xE8) {
+                spdlog::warn("HoverTracker: item-card site is {:02X}, not E8; using the live "
+                             "menu-selection fallback.",
+                             *reinterpret_cast<std::uint8_t*>(site.address()));
+            } else {
+                auto& trampoline = SKSE::GetTrampoline();
+                func_ = trampoline.write_call<5>(site.address(), Thunk);
+                spdlog::info("HoverTracker: item-card hook installed at 51019 "
+                             "(SE +0x114 / AE +0x22C).");
+            }
         }
-        const REL::Relocation<std::uintptr_t> site{ REL::RelocationID(51019, 51897), callOffset };
-        if (*reinterpret_cast<std::uint8_t*>(site.address()) != 0xE8) {
-            spdlog::error("HoverTracker: expected E8 at 51019 (SE +0x114 / AE +0x22C), found {:02X} - hook NOT installed.",
-                          *reinterpret_cast<std::uint8_t*>(site.address()));
-            return;
-        }
-        auto& trampoline = SKSE::GetTrampoline();
-        func_ = trampoline.write_call<5>(site.address(), Thunk);
-        spdlog::info("HoverTracker: hover hook installed at 51019 (SE +0x114 / AE +0x22C).");
 
         REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_Inventory3DManager[0] };
         origCanProcess_ = vtbl.write_vfunc(0x1, CanProcessGate);
 
         REL::Relocation<std::uintptr_t> contVtbl{ RE::VTABLE_ContainerMenu[0] };
         origContainerPM_ = contVtbl.write_vfunc(0x4, ContainerProcessMessage);
+        origContainerAdvance_ = contVtbl.write_vfunc(0x5, ContainerAdvanceMovie);
         REL::Relocation<std::uintptr_t> bartVtbl{ RE::VTABLE_BarterMenu[0] };
         origBarterPM_ = bartVtbl.write_vfunc(0x4, BarterProcessMessage);
+        origBarterAdvance_ = bartVtbl.write_vfunc(0x5, BarterAdvanceMovie);
         REL::Relocation<std::uintptr_t> invVtbl{ RE::VTABLE_InventoryMenu[0] };
         origInventoryPM_ = invVtbl.write_vfunc(0x4, InventoryProcessMessage);
-        spdlog::info("HoverTracker: inspect gates installed (I3DM CanProcess + menu ProcessMessage).");
+        origInventoryAdvance_ = invVtbl.write_vfunc(0x5, InventoryAdvanceMovie);
+        spdlog::info("HoverTracker: inspect gates and live menu-selection fallback installed.");
     }
 
     bool HoverTracker::CanProcessGate(RE::Inventory3DManager* a_this, RE::InputEvent* a_event) {
@@ -131,7 +140,7 @@ namespace AP {
         auto* obj   = entry ? entry->GetObject() : nullptr;
         const bool eat = !entry || (obj && obj->As<RE::TESObjectARMO>() != nullptr);
         if (eat && ev->type == ET::kKeyDown) {
-            spdlog::debug("scaleform key {} eaten ({}; {} - preview button)", code,
+            spdlog::debug("scaleform key {} eaten ({}; {}; preview button)", code,
                           isPreviewCode ? "bound code" : "pad-edge correlated",
                           entry ? "apparel hovered" : "no hover");
         }
@@ -155,66 +164,166 @@ namespace AP {
     }
 
     RE::UI_MESSAGE_RESULTS HoverTracker::InventoryProcessMessage(RE::InventoryMenu* a_this,
-                                                                 RE::UIMessage& a_message) {
+                                                                  RE::UIMessage& a_message) {
         if (ShouldEatZoomMessage(a_message) || ShouldEatScaleformKey(a_message)) {
             return RE::UI_MESSAGE_RESULTS::kHandled;
         }
         return origInventoryPM_(a_this, a_message);
     }
 
-    RE::InventoryEntryData* HoverTracker::GetHovered() { return hovered_.load(); }
-    void                    HoverTracker::ClearHovered() { hovered_ = nullptr; }
+    void HoverTracker::ContainerAdvanceMovie(RE::ContainerMenu* a_this, float a_interval,
+                                              std::uint32_t a_currentTime) {
+        origContainerAdvance_(a_this, a_interval, a_currentTime);
+        SyncSelected();
+    }
 
-    std::int64_t HoverTracker::Thunk(RE::InventoryEntryData* a_entry) {
-        if (a_entry && MenuWatcher::IsArmed()) {
-            hovered_ = a_entry;
-            // Hover-model suppression: the Flash side calls UpdateItem3D (loads
-            // the card model) BEFORE RequestItemCardInfo (this thunk), so
-            // clearing here removes the floating model for apparel without
-            // touching Inventory3DManager's code. Two cases: the optional
-            // always-suppress, and re-hovering a row that is currently
-            // previewed (the on-body preview replaces the card model, so
-            // scrolling away and back must not bring it back).
-            if (auto* obj = a_entry->GetObject(); obj && obj->As<RE::TESObjectARMO>()) {
-                const auto& cfg = Settings::GetSingleton();
-                const bool hidePreviewed =
-                    cfg.clearModelOnPreview &&
-                    PreviewSession::GetSingleton().IsPreviewedEntry(
+    void HoverTracker::BarterAdvanceMovie(RE::BarterMenu* a_this, float a_interval,
+                                           std::uint32_t a_currentTime) {
+        origBarterAdvance_(a_this, a_interval, a_currentTime);
+        SyncSelected();
+    }
+
+    void HoverTracker::InventoryAdvanceMovie(RE::InventoryMenu* a_this, float a_interval,
+                                              std::uint32_t a_currentTime) {
+        origInventoryAdvance_(a_this, a_interval, a_currentTime);
+        SyncSelected();
+    }
+
+    RE::InventoryEntryData* HoverTracker::GetHovered() { return hovered_.load(); }
+
+    RE::InventoryEntryData* HoverTracker::GetSelectedOrHovered() {
+        SyncSelected();
+        return hovered_.load();
+    }
+
+    void HoverTracker::ClearHovered() {
+        const auto& cfg             = Settings::GetSingleton();
+        hovered_                    = nullptr;
+        lastAutoMode_               = cfg.previewOnHover;
+        lastSuppressHoverModel_     = cfg.suppressHoverModel;
+        lastClearModelOnPreview_    = cfg.clearModelOnPreview;
+        SyncItemPreviewSuppression();
+    }
+
+    bool HoverTracker::SyncItemPreviewSuppression() {
+        auto* entry = hovered_.load();
+        auto* obj   = entry ? entry->GetObject() : nullptr;
+        auto* armo  = obj ? obj->As<RE::TESObjectARMO>() : nullptr;
+        const auto& cfg = Settings::GetSingleton();
+        const bool selectedExactEntryIsPreviewed =
+            armo && PreviewSession::GetSingleton().IsPreviewedEntry(
+                        obj->GetFormID(), PreviewSession::VariantKey(entry));
+        const bool suppress = ShouldSuppressItemPreview3D({
+            .selectedIsApparel = armo != nullptr,
+            .suppressHoverModel = cfg.suppressHoverModel,
+            .clearModelOnPreview = cfg.clearModelOnPreview,
+            .selectedExactEntryIsPreviewed = selectedExactEntryIsPreviewed,
+        });
+        return MenuStudioApi::SetItemPreviewSuppressed(suppress);
+    }
+
+    void HoverTracker::SyncSelected() {
+        if (!MenuWatcher::IsArmedAndMenuOpen()) {
+            return;
+        }
+        auto* ui = RE::UI::GetSingleton();
+        if (!ui) {
+            return;
+        }
+
+        RE::ItemList* list = nullptr;
+        if (const auto container = ui->GetMenu<RE::ContainerMenu>()) {
+            list = container->GetRuntimeData().itemList;
+        } else if (const auto barter = ui->GetMenu<RE::BarterMenu>()) {
+            list = barter->GetRuntimeData().itemList;
+        } else if (const auto inventory = ui->GetMenu<RE::InventoryMenu>()) {
+            list = inventory->GetRuntimeData().itemList;
+        }
+        if (!list || list->updatePending) {
+            return;  // list rebuild in progress; keep the last stable selection
+        }
+
+        auto* selected = list->GetSelectedItem();
+        ObserveSelected(selected ? selected->data.objDesc : nullptr);
+    }
+
+    void HoverTracker::ObserveSelected(RE::InventoryEntryData* a_entry) {
+        const auto& cfg         = Settings::GetSingleton();
+        const bool  modeChanged = lastAutoMode_ != cfg.previewOnHover;
+        const bool itemModelPolicyChanged =
+            lastSuppressHoverModel_ != cfg.suppressHoverModel ||
+            lastClearModelOnPreview_ != cfg.clearModelOnPreview;
+        lastAutoMode_            = cfg.previewOnHover;
+        lastSuppressHoverModel_  = cfg.suppressHoverModel;
+        lastClearModelOnPreview_ = cfg.clearModelOnPreview;
+
+        auto* previous = hovered_.exchange(a_entry);
+        if (previous == a_entry && !modeChanged && !itemModelPolicyChanged) {
+            return;
+        }
+
+        auto* obj  = a_entry ? a_entry->GetObject() : nullptr;
+        auto* armo = obj ? obj->As<RE::TESObjectARMO>() : nullptr;
+        const bool selectedExactEntryIsPreviewed =
+            armo && PreviewSession::GetSingleton().IsPreviewedEntry(
                         obj->GetFormID(), PreviewSession::VariantKey(a_entry));
-                if (cfg.suppressHoverModel || hidePreviewed) {
-                    if (auto* i3d = RE::Inventory3DManager::GetSingleton()) {
-                        i3d->Clear3D();
-                        spdlog::debug("item3d cleared for '{}'{}", a_entry->GetDisplayName(),
-                                      hidePreviewed ? " (previewed)" : "");
-                    }
+        const bool delegated = SyncItemPreviewSuppression();
+        if (armo) {
+            // Clear only for the actual selected row. The old item-card hook is
+            // also invoked while some UI overhauls build every row, so treating
+            // its argument as "hovered" hid models and selected the final row
+            // in the rebuild rather than the row under the cursor.
+            const bool hidePreviewed =
+                cfg.clearModelOnPreview && selectedExactEntryIsPreviewed;
+            const bool suppressItemPreview = cfg.suppressHoverModel || hidePreviewed;
+            if (suppressItemPreview && !delegated) {
+                if (auto* i3d = RE::Inventory3DManager::GetSingleton()) {
+                    i3d->UnloadInventoryItem();
+                    spdlog::debug("item3d cleared for selected '{}'{}",
+                                  a_entry->GetDisplayName(),
+                                  hidePreviewed ? " (previewed)" : "");
                 }
             }
-            // Checkpoint-1 diagnostics: which menu, what item, which thread.
-            // variant= proves rows of one base form are distinguishable (it
-            // differs per row) and that the menu really hands us one entry
-            // per row rather than one shared entry per base form.
-            auto*       ui   = RE::UI::GetSingleton();
-            const char* menu = "Container";
-            if (ui && ui->IsMenuOpen(RE::BarterMenu::MENU_NAME)) {
-                menu = "Barter";
-            } else if (ui && ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME)) {
-                menu = "Inventory";
-            }
-            const auto* obj  = a_entry->GetObject();
-            spdlog::debug("hover[{}] {:08X} '{}' armo={} variant={:08X} entry={} thread={}", menu,
-                          obj ? obj->GetFormID() : 0, a_entry->GetDisplayName(),
-                          obj && obj->As<RE::TESObjectARMO>() != nullptr,
-                          PreviewSession::VariantKey(a_entry),
-                          static_cast<const void*>(a_entry),
-                          std::hash<std::thread::id>{}(std::this_thread::get_id()) & 0xFFFF);
-            // Refresh the native "Preview" nav-panel prompt for this selection
-            // (adds it for previewable apparel, removes it otherwise). Deferred
-            // to a UI task so it lands after SkyUI rebuilds the bottom bar.
-            if (Settings::GetSingleton().showPreviewButton) {
-                SKSE::GetTaskInterface()->AddUITask([]() { NavButton::Refresh(); });
+        }
+
+        auto*       ui   = RE::UI::GetSingleton();
+        const char* menu = "Container";
+        if (ui && ui->IsMenuOpen(RE::BarterMenu::MENU_NAME)) {
+            menu = "Barter";
+        } else if (ui && ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME)) {
+            menu = "Inventory";
+        }
+        spdlog::debug("selected[{}] {:08X} '{}' armo={} variant={:08X} entry={} thread={}",
+                      menu, obj ? obj->GetFormID() : 0,
+                      a_entry ? a_entry->GetDisplayName() : "<none>", armo != nullptr,
+                      a_entry ? PreviewSession::VariantKey(a_entry) : 0,
+                      static_cast<const void*>(a_entry),
+                      std::hash<std::thread::id>{}(std::this_thread::get_id()) & 0xFFFF);
+
+        if (cfg.showPreviewButton) {
+            // Defer so this runs after the menu finishes rebuilding its bottom
+            // bar for the newly selected row.
+            SKSE::GetTaskInterface()->AddUITask([]() { NavButton::Refresh(); });
+        }
+
+        if (cfg.previewOnHover) {
+            if (armo) {
+                PreviewSession::GetSingleton().PreviewOnly(
+                    armo, PreviewSession::VariantKey(a_entry));
+            } else {
+                PreviewSession::GetSingleton().Clear();
             }
         }
-        return func_(a_entry);
+    }
+
+    std::int64_t HoverTracker::Thunk(RE::InventoryEntryData* a_entry) {
+        // Preserve the displaced call first, then read selectedIndex from the
+        // live list. The argument is not reliably the highlighted row: several
+        // popular UI stacks invoke this call once for every row during a list
+        // rebuild.
+        const auto result = func_(a_entry);
+        SyncSelected();
+        return result;
     }
 
 }  // namespace AP

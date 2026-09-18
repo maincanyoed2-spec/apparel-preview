@@ -1,4 +1,5 @@
 #pragma once
+#include "ItemPreviewSuppression.h"
 #include "PCH.h"
 
 namespace AP {
@@ -14,14 +15,16 @@ namespace AP {
         bool enableContainer{ true };
         bool enableBarter{ true };
         bool enableInventory{ true };  // player inventory (InventoryMenu)
+        bool previewOnHover{ false };  // optional keyless, single-item mouseover mode
         bool sceneKick{ true };            // paused-menu render kick
         bool allowShields{ true };         // shields flagged for testing (spec §7)
         bool notifyUnfitPreview{ true };   // notification when a piece has no armature
                                            // for the player's race (UBE etc.) - the
                                            // preview is declined either way
-        bool suppressHoverModel{ false };  // hide the item-card 3D for apparel on hover
-        bool clearModelOnPreview{ true };  // clear the floating item model when toggling
-        bool blockApparelInspect{ true };  // keep the zoom/inspect mode (HUD-hiding) off for apparel
+        bool suppressHoverModel{ false };  // hide the floating item preview for apparel
+        // Hide the floating item preview while a worn preview is active.
+        bool clearModelOnPreview{ kDefaultClearModelOnPreview };
+        bool blockApparelInspect{ true };   // keep inspect mode (HUD-hiding) off for apparel
         bool blockPOVWhileArmed{ true };   // no camera POV switch while Container/Barter is open
                                            // (matters with unpaused-menu mods; vanilla pause = inert)
         // The gold DIII eye icon is the only previewed-row marker; it shows

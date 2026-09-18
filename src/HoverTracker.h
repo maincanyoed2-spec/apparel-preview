@@ -1,4 +1,5 @@
 #pragma once
+#include "ItemPreviewSuppression.h"
 #include "PCH.h"
 
 namespace AP {
@@ -12,10 +13,21 @@ namespace AP {
         // Latest hovered entry while a supported menu is open; nullptr otherwise.
         // Only valid while the menu is open (entries die with the menu).
         [[nodiscard]] static RE::InventoryEntryData* GetHovered();
+        // Refresh from the live menu's selectedIndex first. This is the
+        // resilient path used by input handling when another UI mod bypasses
+        // or replaces the item-card call hook.
+        [[nodiscard]] static RE::InventoryEntryData* GetSelectedOrHovered();
         static void ClearHovered();
+
+        // Re-evaluate this plugin's owner-scoped claim on Menu Studio's
+        // floating item preview. Returns true when Menu Studio accepted the
+        // state, false when the legacy Inventory3DManager fallback is needed.
+        static bool SyncItemPreviewSuppression();
 
     private:
         static std::int64_t Thunk(RE::InventoryEntryData* a_entry);
+        static void SyncSelected();
+        static void ObserveSelected(RE::InventoryEntryData* a_entry);
         // Inventory3DManager handles the 'Item Zoom' button natively (it is a
         // MenuEventHandler) and entering that mode hides the HUD. This vfunc
         // gate declines the zoom for apparel while armed, so the preview key
@@ -29,6 +41,15 @@ namespace AP {
                                                            RE::UIMessage& a_message);
         static RE::UI_MESSAGE_RESULTS InventoryProcessMessage(RE::InventoryMenu* a_this,
                                                               RE::UIMessage& a_message);
+        // Poll selectedIndex after each menu movie advance. Unlike the
+        // item-card hook, this path is part of every supported menu and works
+        // with UI overhauls that build item cards differently.
+        static void ContainerAdvanceMovie(RE::ContainerMenu* a_this, float a_interval,
+                                          std::uint32_t a_currentTime);
+        static void BarterAdvanceMovie(RE::BarterMenu* a_this, float a_interval,
+                                       std::uint32_t a_currentTime);
+        static void InventoryAdvanceMovie(RE::InventoryMenu* a_this, float a_interval,
+                                          std::uint32_t a_currentTime);
         static bool ShouldEatZoomMessage(RE::UIMessage& a_message);
         // Third delivery path: the RAW gamepad key also reaches Flash as a
         // kScaleformEvent key message, where UI mods bind their own actions
@@ -43,7 +64,14 @@ namespace AP {
         static inline REL::Relocation<decltype(ContainerProcessMessage)> origContainerPM_;
         static inline REL::Relocation<decltype(BarterProcessMessage)>    origBarterPM_;
         static inline REL::Relocation<decltype(InventoryProcessMessage)> origInventoryPM_;
+        static inline REL::Relocation<decltype(ContainerAdvanceMovie)>   origContainerAdvance_;
+        static inline REL::Relocation<decltype(BarterAdvanceMovie)>      origBarterAdvance_;
+        static inline REL::Relocation<decltype(InventoryAdvanceMovie)>   origInventoryAdvance_;
         static inline std::atomic<RE::InventoryEntryData*>               hovered_{ nullptr };
+        static inline bool                                                lastAutoMode_{ false };
+        static inline bool                                                lastSuppressHoverModel_{ false };
+        static inline bool                                                lastClearModelOnPreview_{
+            kDefaultClearModelOnPreview };
     };
 
 }  // namespace AP

@@ -147,7 +147,10 @@ namespace AP {
             if (!match) {
                 continue;
             }
-            if (auto* entry = HoverTracker::GetHovered()) {
+            // Read the live menu selection at the moment of the press. The
+            // item-card hook is only an accelerator; UI overhauls may bypass
+            // it or invoke it for every row during a rebuild.
+            if (auto* entry = HoverTracker::GetSelectedOrHovered()) {
                 auto* obj  = entry->GetObject();
                 auto* armo = obj ? obj->As<RE::TESObjectARMO>() : nullptr;
                 if (armo) {
@@ -157,7 +160,7 @@ namespace AP {
                     spdlog::debug("preview key: hovered item is not apparel");
                 }
             } else {
-                spdlog::debug("preview key: no hovered entry");
+                spdlog::debug("preview key: no selected entry");
             }
         }
         return RE::BSEventNotifyControl::kContinue;
