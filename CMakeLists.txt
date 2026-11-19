@@ -38,6 +38,8 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/Settings.cpp
         src/REAugments.h
         src/REAugments.cpp
+        src/PreviewTarget.h
+        src/PreviewTarget.cpp
         src/PreviewSession.h
         src/PreviewSession.cpp
         src/MenuWatcher.h

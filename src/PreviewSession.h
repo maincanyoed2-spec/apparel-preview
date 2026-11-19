@@ -65,7 +65,10 @@ namespace AP {
         // refresh site that called REAug::RefreshPlayer directly would leave
         // FR answering for the previous state. See FittingRoomSignal.h.
         // Static so the task-interface lambdas can reach it without capturing.
-        static void PublishAndRefresh(bool a_sceneKick);
+        // a_actorID: the actor to rebuild (0 = player). Callers that run after
+        // the menu closed capture PreviewTarget::GetID() BEFORE the target is
+        // reset, so the revert refresh still reaches the follower.
+        static void PublishAndRefresh(bool a_sceneKick, RE::FormID a_actorID);
 
         mutable std::mutex lock_;
         PreviewSet         set_;

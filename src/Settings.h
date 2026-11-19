@@ -25,6 +25,7 @@ namespace AP {
         // Hide the floating item preview while a worn preview is active.
         bool clearModelOnPreview{ kDefaultClearModelOnPreview };
         bool blockApparelInspect{ true };   // keep inspect mode (HUD-hiding) off for apparel
+        bool previewOnFollower{ true };    // trading with a follower: preview on THEM, not on you
         bool blockPOVWhileArmed{ true };   // no camera POV switch while Container/Barter is open
                                            // (matters with unpaused-menu mods; vanilla pause = inert)
         // The gold DIII eye icon is the only previewed-row marker; it shows

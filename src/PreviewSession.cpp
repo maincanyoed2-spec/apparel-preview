@@ -4,6 +4,7 @@
 #include "HoverTracker.h"
 #include "ListMarker.h"
 #include "MenuStudioApi.h"
+#include "PreviewTarget.h"
 #include "Settings.h"
 
 namespace AP {
@@ -69,8 +70,9 @@ namespace AP {
         if (!a_armor) {
             return;
         }
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        auto* race   = player ? player->GetRace() : nullptr;
+        PreviewTarget::Resolve();  // follower trade -> preview on the follower
+        auto* target = PreviewTarget::Get();
+        auto* race   = target ? target->GetRace() : nullptr;
         if (!race || !a_armor->GetArmorAddon(race)) {
             // Body-mod case (UBE etc. are custom races): a piece with no
             // armature for the player's race attaches nothing - the engine
@@ -108,8 +110,9 @@ namespace AP {
             Clear();
             return;
         }
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        auto* race   = player ? player->GetRace() : nullptr;
+        PreviewTarget::Resolve();
+        auto* target = PreviewTarget::Get();
+        auto* race   = target ? target->GetRace() : nullptr;
         if (!race || !a_armor->GetArmorAddon(race)) {
             spdlog::info("mouseover preview declined: '{}' ({:08X}) has no armor addon for "
                          "race '{}'. Does not fit this body.",
@@ -153,7 +156,7 @@ namespace AP {
         // would double-visit the armor in ExecuteVisitorOnWorn. Runs on the
         // game thread (SKSE task) with no session lock held.
         bool IsFormWornByPlayer(RE::FormID a_formID) {
-            auto* player  = RE::PlayerCharacter::GetSingleton();
+            auto* player  = PreviewTarget::Get();  // the previewed actor (player or follower)
             auto* changes = player ? player->GetInventoryChanges() : nullptr;
             if (!changes || !changes->entryList) {
                 return false;
@@ -204,6 +207,9 @@ namespace AP {
         // unrelated headwear previewable (hidden HOOD covers 30/31; a
         // CIRCLET preview in 42 still renders).
         bool HiddenHeadgearConflict(std::uint32_t a_candidateMask) {
+            if (!PreviewTarget::IsPlayer()) {
+                return false;  // HT2's state global describes the player's helmet only
+            }
             auto* global = HelmetStateGlobal();
             if (!global || global->value <= 0.0f) {
                 return false;
@@ -263,7 +269,7 @@ namespace AP {
                      change == PreviewSet::Change::kAdded ? "ON" : "OFF", a_name,
                      a_formID, a_variantKey, a_mask);
         const auto& cfg = Settings::GetSingleton();
-        PublishAndRefresh(cfg.sceneKick);
+        PublishAndRefresh(cfg.sceneKick, PreviewTarget::GetID());
         ListMarker::Apply();
         // Preview ON: hide the floating item preview so it doesn't block the
         // character (the hover thunk keeps it hidden while the row stays
@@ -320,7 +326,7 @@ namespace AP {
                                       "UIMenuCancel");
             }
             if (clearedRejected) {
-                PublishAndRefresh(Settings::GetSingleton().sceneKick);
+                PublishAndRefresh(Settings::GetSingleton().sceneKick, PreviewTarget::GetID());
                 ListMarker::Apply();
             }
             return;
@@ -332,7 +338,7 @@ namespace AP {
         spdlog::info("preview HOVER '{}' ({:08X} variant={:08X}, mask={:08X})",
                      a_name, a_formID, a_variantKey, a_mask);
         const auto& cfg = Settings::GetSingleton();
-        PublishAndRefresh(cfg.sceneKick);
+        PublishAndRefresh(cfg.sceneKick, PreviewTarget::GetID());
         ListMarker::Apply();
         if (!MenuStudioApi::Available() && cfg.clearModelOnPreview) {
             if (auto* i3d = RE::Inventory3DManager::GetSingleton()) {
@@ -350,8 +356,11 @@ namespace AP {
             set_.Clear();
         }
         if (wasActive) {
-            SKSE::GetTaskInterface()->AddTask([] {
-                PublishAndRefresh(Settings::GetSingleton().sceneKick);
+            // Captured NOW: on menu close the target is reset right after this
+            // returns, and the queued revert must still rebuild the follower.
+            const auto targetID = PreviewTarget::GetID();
+            SKSE::GetTaskInterface()->AddTask([targetID] {
+                PublishAndRefresh(Settings::GetSingleton().sceneKick, targetID);
                 ListMarker::Apply();  // no-op if the menu already closed (disarmed)
             });
             spdlog::info("preview CLEARED.");
@@ -378,14 +387,15 @@ namespace AP {
         }
         if (removed) {
             spdlog::info("previewed item {:08X} {}. Dropped from preview.", a_formID, a_reason);
-            SKSE::GetTaskInterface()->AddTask([] {
-                PublishAndRefresh(Settings::GetSingleton().sceneKick);
+            const auto targetID = PreviewTarget::GetID();
+            SKSE::GetTaskInterface()->AddTask([targetID] {
+                PublishAndRefresh(Settings::GetSingleton().sceneKick, targetID);
                 ListMarker::Apply();
             });
         }
     }
 
-    void PreviewSession::PublishAndRefresh(bool a_sceneKick) {
+    void PreviewSession::PublishAndRefresh(bool a_sceneKick, RE::FormID a_actorID) {
         // ⚠ BEFORE the refresh. RefreshPlayer is what drives the engine's
         // GetWornMask call, and Fitting Room decides whether to shim that call
         // from the flag this message sets. Publishing afterwards would answer
@@ -394,7 +404,12 @@ namespace AP {
         // Read outside any lock we hold: every caller has already released it,
         // and StateToPublish takes lock_ itself.
         if (auto* const messaging = SKSE::GetMessagingInterface()) {
-            const auto state = GetSingleton().StateToPublish();
+            auto state = GetSingleton().StateToPublish();
+            if (a_actorID != 0) {
+                // Fitting Room only dresses the player. A follower preview must
+                // not arm its dye skip against slots nobody is previewing.
+                state = PublishState{};
+            }
             // ⚠ SLOTS FIRST, FLAG SECOND, AND THE ORDER IS THE CONTRACT
             // (OS-145). Fitting Room packs the two into one word and the flag
             // is what arms its dye skip, so the mask has to be in place before
@@ -411,7 +426,12 @@ namespace AP {
             messaging->Dispatch(kPreviewStateMsg, const_cast<std::uint8_t*>(&active),
                                 sizeof(active), "FittingRoom");
         }
-        REAug::RefreshPlayer(a_sceneKick);
+        RE::Actor* actor = a_actorID != 0 ? RE::TESForm::LookupByID<RE::Actor>(a_actorID)
+                                          : nullptr;
+        if (!actor) {
+            actor = RE::PlayerCharacter::GetSingleton();
+        }
+        REAug::RefreshActor(actor, a_sceneKick);
         HoverTracker::SyncItemPreviewSuppression();
     }
 

@@ -21,6 +21,9 @@ namespace AP::REAug {
     // rebuild renders inside paused Container/Barter menus - IED's recipe).
     void RefreshPlayer(bool a_sceneKick);
 
+    // Same refresh for any actor (follower preview). RefreshPlayer forwards here.
+    void RefreshActor(RE::Actor* a_actor, bool a_sceneKick);
+
     // Engine broadcast: "this ref's inventory changed" - open menus rebuild
     // their lists with an engine-allocated payload. SE REL::ID 51911 (newer
     // CommonLibSSE-NG exposes this as RE::SendUIMessage; ours predates it).

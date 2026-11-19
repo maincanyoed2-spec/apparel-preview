@@ -2,6 +2,7 @@
 
 #include "MenuWatcher.h"
 #include "PreviewSession.h"
+#include "PreviewTarget.h"
 #include "REAugments.h"
 #include "VersionCheck.h"
 
@@ -51,7 +52,9 @@ namespace AP {
                             RE::InventoryChanges::IItemChangeVisitor& a_visitor,
                             RE::Actor* a_rbxActor, REAug::ActorWeightModel* a_rdiAWM) {
             auto& session = PreviewSession::GetSingleton();
-            auto* player  = RE::PlayerCharacter::GetSingleton();
+            // The "player" below is the PREVIEW TARGET: the player normally,
+            // or the follower while a follower trade menu is open.
+            auto* player  = PreviewTarget::Get();
             auto* owner   = a_changes ? a_changes->owner : nullptr;
             const bool forPlayer = player && owner == player;
 
@@ -110,7 +113,7 @@ namespace AP {
         std::uint32_t GetWornMaskThunk(RE::InventoryChanges* a_changes) {
             const auto real    = g_origGetWornMask(a_changes);
             auto&      session = PreviewSession::GetSingleton();
-            auto*      player  = RE::PlayerCharacter::GetSingleton();
+            auto*      player  = PreviewTarget::Get();  // preview target (player or follower)
             if (!session.IsActive() || !a_changes || !player || a_changes->owner != player) {
                 return real;
             }

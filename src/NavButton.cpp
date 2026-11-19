@@ -3,6 +3,7 @@
 #include "HoverTracker.h"
 #include "InputListener.h"
 #include "MenuWatcher.h"
+#include "PreviewTarget.h"
 #include "Settings.h"
 
 #include <vector>
@@ -27,8 +28,9 @@ namespace AP::NavButton {
             if (a_entry && a_entry->IsWorn()) {
                 return false;
             }
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            auto* race   = player ? player->GetRace() : nullptr;
+            PreviewTarget::Resolve();
+            auto* target = PreviewTarget::Get();
+            auto* race   = target ? target->GetRace() : nullptr;
             if (!race || !a_armo->GetArmorAddon(race)) {
                 return false;  // no armature for this body - cannot preview
             }

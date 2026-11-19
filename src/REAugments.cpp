@@ -32,10 +32,14 @@ namespace AP::REAug {
     }
 
     void RefreshPlayer(bool a_sceneKick) {
-        auto* player = RE::PlayerCharacter::GetSingleton();
+        RefreshActor(RE::PlayerCharacter::GetSingleton(), a_sceneKick);
+    }
+
+    void RefreshActor(RE::Actor* a_actor, bool a_sceneKick) {
+        auto* player = a_actor;  // the actor being refreshed (player or follower)
         auto* proc   = player ? player->GetActorRuntimeData().currentProcess : nullptr;
         if (!proc) {
-            spdlog::warn("RefreshPlayer: no AIProcess.");
+            spdlog::warn("RefreshActor: no AIProcess.");
             return;
         }
         // Proven on 1.5.97 (checkpoint 2): this synchronous rebuild runs even
@@ -61,7 +65,7 @@ namespace AP::REAug {
                 root->Update(ctx);
             }
         }
-        spdlog::debug("RefreshPlayer done (kick={}).", a_sceneKick);
+        spdlog::debug("RefreshActor done (kick={}).", a_sceneKick);
     }
 
 }  // namespace AP::REAug

@@ -4,6 +4,7 @@
 #include "FittingRoomSignal.h"
 #include "HoverTracker.h"
 #include "PreviewSession.h"
+#include "PreviewTarget.h"
 #include "Settings.h"
 
 namespace AP {
@@ -49,6 +50,7 @@ namespace AP {
         self.fittingRoomOpen_.store(false);
         HoverTracker::ClearHovered();
         PreviewSession::GetSingleton().Clear();
+        PreviewTarget::Reset();  // after Clear(): it captured the target for the revert
         if (wasArmed) {
             spdlog::warn("MenuWatcher: force reset while armed ({}). A menu close was missed.",
                          a_reason);
@@ -76,12 +78,14 @@ namespace AP {
                 return RE::BSEventNotifyControl::kContinue;
             }
             armed_ = true;
+            PreviewTarget::Resolve();  // follower trade -> follower (re-resolved on first preview too)
             spdlog::debug("MenuWatcher: {} opened -> armed", a_event->menuName.c_str());
         } else {
             armed_ = false;
             fittingRoomOpen_ = false;
             HoverTracker::ClearHovered();
             PreviewSession::GetSingleton().Clear();  // master revert on EVERY close path
+            PreviewTarget::Reset();                  // after Clear(): it captured the target
             spdlog::debug("MenuWatcher: {} closed -> cleared + disarmed", a_event->menuName.c_str());
         }
         return RE::BSEventNotifyControl::kContinue;

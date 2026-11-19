@@ -25,7 +25,23 @@ https://www.nexusmods.com/skyrimspecialedition/mods/185334
 * [FLICK](https://www.nexusmods.com/skyrimspecialedition/mods/181603), optional, for the in-game settings panel. Everything is configurable through the INI without it.
 * [Dynamic Inventory Icon Injector](https://www.nexusmods.com/skyrimspecialedition/mods/174136), optional, for the gold eye icon on previewed rows
 
+## Follower preview (fork feature)
+
+When a container menu is open on one of your followers (the "Trade" screen), the
+preview key now shows the armour on the **follower** instead of on you. Controlled
+by `bPreviewOnFollower` in `ApparelPreview.ini` (default `true`). The follower has
+to be visible on screen; the preview ends when you close the menu, and the
+follower's real outfit is restored.
+
 ## Building
+
+### On GitHub (no local Visual Studio)
+
+Open the **Actions** tab, pick **Build ApparelPreview**, press **Run workflow**.
+When it finishes, download the `ApparelPreview-FollowerPreview` artifact: it has
+`SKSE/Plugins/ApparelPreview.dll` ready to drop into your mod folder.
+
+### Locally
 
 ```
 git clone --recurse-submodules https://github.com/maartenharms/apparel-preview.git

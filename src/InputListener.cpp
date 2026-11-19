@@ -3,6 +3,7 @@
 #include "HoverTracker.h"
 #include "MenuWatcher.h"
 #include "PreviewSession.h"
+#include "PreviewTarget.h"
 #include "Settings.h"
 
 #include <bit>
@@ -171,7 +172,9 @@ namespace AP {
         RE::BSTEventSource<RE::TESContainerChangedEvent>*) {
         if (a_event && PreviewSession::GetSingleton().IsActive()) {
             const auto* player = RE::PlayerCharacter::GetSingleton();
-            if (player && a_event->newContainer == player->GetFormID()) {
+            const auto targetID = PreviewTarget::GetID();
+            if ((player && a_event->newContainer == player->GetFormID()) ||
+                (targetID != 0 && a_event->newContainer == targetID)) {
                 PreviewSession::GetSingleton().OnPlayerAcquired(a_event->baseObj);
             }
         }
@@ -182,8 +185,12 @@ namespace AP {
         const RE::TESEquipEvent* a_event, RE::BSTEventSource<RE::TESEquipEvent>*) {
         // Equipping a previewed form (reachable from the inventory menu) ends
         // its preview - the real equip owns the slot from here on.
+        // A follower that auto-equips a previewed piece ends it the same way.
+        const auto targetID = PreviewTarget::GetID();
         if (a_event && a_event->equipped && a_event->actor &&
-            a_event->actor->IsPlayerRef() && PreviewSession::GetSingleton().IsActive()) {
+            (a_event->actor->IsPlayerRef() ||
+             (targetID != 0 && a_event->actor->GetFormID() == targetID)) &&
+            PreviewSession::GetSingleton().IsActive()) {
             PreviewSession::GetSingleton().OnPlayerEquipped(a_event->baseObject);
         }
         return RE::BSEventNotifyControl::kContinue;

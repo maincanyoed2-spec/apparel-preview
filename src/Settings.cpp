@@ -31,6 +31,7 @@ namespace AP {
         clearModelOnPreview = ini.GetBoolValue("General", "bClearItemModelOnPreview", clearModelOnPreview);
         blockApparelInspect = ini.GetBoolValue("General", "bBlockApparelInspect", blockApparelInspect);
         blockPOVWhileArmed  = ini.GetBoolValue("General", "bBlockPOVSwitch", blockPOVWhileArmed);
+        previewOnFollower   = ini.GetBoolValue("General", "bPreviewOnFollower", previewOnFollower);
         notifyUnfitPreview  = ini.GetBoolValue("General", "bNotifyUnfitPreview", notifyUnfitPreview);
         sceneKick           = ini.GetBoolValue("Advanced", "bSceneKick", sceneKick);
         allowShields        = ini.GetBoolValue("Advanced", "bAllowShields", allowShields);
@@ -64,6 +65,10 @@ namespace AP {
                          "; worn preview is showing. Off by default. Turn it on only if the\n"
                          "; floating preview sits over your character");
         ini.SetBoolValue("General", "bBlockApparelInspect", blockApparelInspect);
+        ini.SetBoolValue("General", "bPreviewOnFollower", previewOnFollower,
+                         "; when a container menu is open on one of your followers (the Trade\n"
+                         "; screen), preview armour on the follower instead of on you. The\n"
+                         "; follower must be visible on screen");
         ini.SetBoolValue("General", "bBlockPOVSwitch", blockPOVWhileArmed,
                          "; block camera POV switching while a container, barter or inventory\n"
                          "; menu is open (only matters with unpaused-menu mods like Skyrim\n"
