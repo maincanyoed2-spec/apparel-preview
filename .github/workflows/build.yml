@@ -1,0 +1,91 @@
+name: Build ApparelPreview
+
+# Builds the SKSE plugin on GitHub's Windows runner (MSVC is preinstalled there,
+# so no local Visual Studio is needed). Run it from the Actions tab
+# ("Run workflow") or it runs on every push to main.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout (with CommonLibSSE-NG submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # If this repo was created by uploading a ZIP instead of forking, the
+      # submodule folder is empty. Fetch the library the project is pinned to.
+      - name: Ensure CommonLibSSE-NG is present
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "extern/CommonLibSSE-NG/CMakeLists.txt")) {
+            Write-Host "Submodule missing, cloning alandtse/CommonLibSSE-NG (branch ng)"
+            Remove-Item -Recurse -Force extern/CommonLibSSE-NG -ErrorAction SilentlyContinue
+            git clone --recurse-submodules --branch ng https://github.com/alandtse/CommonLibSSE-NG.git extern/CommonLibSSE-NG
+          }
+
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        shell: pwsh
+        run: pip install ninja
+
+      # vcpkg.json pins a builtin-baseline, so vcpkg needs full git history.
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP\vcpkg"
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\vcpkg-bincache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\vcpkg-bincache" | Out-Null
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$env:GITHUB_WORKSPACE\vcpkg-bincache,readwrite"
+          $ninja = (Get-Command ninja).Source
+          # CMakePresets.json hardcodes the author's Visual Studio path for
+          # ninja; override it here. OUTPUT_FOLDER makes the post-build step
+          # stage the DLL + dist files into ./staging instead of the author's
+          # local game folder.
+          cmake --preset release `
+            "-DCMAKE_MAKE_PROGRAM=$ninja" `
+            "-DOUTPUT_FOLDER=$env:GITHUB_WORKSPACE/staging"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$env:GITHUB_WORKSPACE\vcpkg-bincache,readwrite"
+          cmake --build build/release
+
+      - name: Unit tests
+        shell: pwsh
+        run: ./build/release/PreviewSetTests.exe
+
+      - name: Copy PDB (for crash-log lookup)
+        shell: pwsh
+        run: |
+          if (Test-Path build/release/ApparelPreview.pdb) {
+            Copy-Item build/release/ApparelPreview.pdb staging/ApparelPreview.pdb
+          }
+
+      - name: Upload mod files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ApparelPreview-FollowerPreview
+          path: staging/
+          if-no-files-found: error
